@@ -26,6 +26,7 @@
   libsm,
   libice,
   freetype,
+  zstd,
   runCommand,
   nixosTests ? { },
   # Flake passes monorepo `src`; nixpkgs omits and uses fetchFromGitHub.
@@ -104,9 +105,13 @@ let
     };
   };
 
+  # Common native libs for the managed Python venv (torch, pillow, etc.).
+  # GPU HIP/CUDA come from the host (/run/opengl-driver, system ROCm via the
+  # NixOS module or /opt/rocm) — not bundled here (multi-GB, arch-specific).
   pythonRuntimeLibs = [
     stdenv.cc.cc.lib
     zlib
+    zstd
     openssl
     libGL
     libglvnd
@@ -181,7 +186,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
       --set FONTCONFIG_FILE ${fontsConf} \
       --set UV_PYTHON ${python312}/bin/python3.12 \
       --set UV_PYTHON_DOWNLOADS never \
-      --run 'if [ -d /run/opengl-driver/lib ]; then export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi'
+      --run 'if [ -d /run/opengl-driver/lib ]; then export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi' \
+      --run 'if [ -d /opt/rocm/lib ]; then export LD_LIBRARY_PATH="/opt/rocm/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi' \
+      --run 'if [ -d /run/current-system/sw/lib ] && ls /run/current-system/sw/lib/libamdhip64.so* >/dev/null 2>&1; then export LD_LIBRARY_PATH="/run/current-system/sw/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi'
   '';
 
   passthru.tests = {
@@ -216,6 +223,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
           grep -q UV_PYTHON_DOWNLOADS "$bin"
           grep -q FONTCONFIG_FILE "$bin"
           grep -q opengl-driver "$bin"
+          grep -q '/opt/rocm/lib' "$bin"
           grep -q nodejs "$bin"
           grep -q ffmpeg "$bin"
           grep -q '/bin/uv' "$bin" || grep -q uv- "$bin"

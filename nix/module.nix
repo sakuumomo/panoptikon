@@ -1,5 +1,7 @@
 # NixOS module: services.panoptikon
 # Runtime: --root stateDir (never /nix/store); tools via package wrap + host_paths.
+# GPU: accelerator cpu|cuda|rocm|auto; ROCm installs HIP/HSA into the system
+# profile and grants the service user render/video + DRM/KFD device access.
 {
   config,
   lib,
@@ -22,6 +24,28 @@ let
   root = cfg.stateDir;
   serverConfig = "${root}/config/server/default.toml";
   panoptikonBin = "${cfg.package}/bin/panoptikon";
+
+  useGpu = cfg.accelerator != "cpu";
+  useRocm = cfg.accelerator == "rocm";
+  useCuda = cfg.accelerator == "cuda";
+
+  # HIP/HSA for pytorch.org multi-arch rocm7.2 wheels. Fat wheels vendor most
+  # math libs; the process still needs the host HIP runtime on the loader path.
+  # systemPackages places these under /run/current-system/sw/lib so
+  # panoptikon's rocm_env discovery (and the package wrap) can find them.
+  rocmRuntimePkgs =
+    with pkgs.rocmPackages;
+    [
+      clr
+      rocm-runtime
+      rocm-device-libs
+      rocminfo
+      rocm-smi
+    ]
+    ++ (with pkgs; [
+      numactl
+      zstd
+    ]);
 in
 {
   options.services.panoptikon = {
@@ -59,7 +83,24 @@ in
       ];
       default = "cpu";
       description = ''
-        Setup accelerator (PANOPTIKON_ACCELERATOR). cuda/rocm need host drivers.
+        Setup accelerator (PANOPTIKON_ACCELERATOR).
+        - `cpu`: no GPU devices; closed device namespace.
+        - `cuda`: NVIDIA (host drivers via /run/opengl-driver).
+        - `rocm`: AMD ROCm 7.2.x — installs HIP/HSA into the system profile,
+          opens DRM/KFD, and adds the service user to render/video.
+        - `auto`: host-detect at setup; for AMD, install ROCm on the system
+          yourself (or set `rocm` explicitly so this module provides HIP).
+      '';
+    };
+
+    rocmOverrideGfx = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "10.3.0";
+      description = ''
+        When set, exports HSA_OVERRIDE_GFX_VERSION for the service (and
+        preStart setup). Only needed if ROCm mis-detects the GPU ISA; native
+        gfx1030 with multi-arch pytorch.org wheels usually does not need this.
       '';
     };
 
@@ -115,6 +156,7 @@ in
       description = ''
         preStart: `panoptikon setup --if-needed` (TimeoutStartSec); process keeps
         PANOPTIKON_AUTO_SETUP for a later stale lockfile. First sync is multi-GB.
+        With accelerator=rocm, setup also runs a HIP kernel probe.
       '';
     };
 
@@ -131,6 +173,10 @@ in
         assertion = !(lib.hasPrefix "/nix/store" cfg.stateDir);
         message = "services.panoptikon.stateDir must not be under /nix/store (immutable).";
       }
+      {
+        assertion = cfg.rocmOverrideGfx == null || useRocm || cfg.accelerator == "auto";
+        message = "services.panoptikon.rocmOverrideGfx is only meaningful with accelerator rocm or auto.";
+      }
     ];
 
     users.users.${cfg.user} = {
@@ -139,6 +185,11 @@ in
       home = cfg.stateDir;
       createHome = false;
       description = "Panoptikon service user";
+      # DRM render nodes + /dev/kfd (ROCm); NVIDIA also uses video/render on NixOS.
+      extraGroups = lib.optionals useGpu [
+        "render"
+        "video"
+      ];
     };
     users.groups.${cfg.group} = { };
 
@@ -147,9 +198,12 @@ in
       pkgs.noto-fonts
     ];
 
+    # HIP/HSA on the system profile so /run/current-system/sw/lib has
+    # libamdhip64 (discovered by panoptikon rocm_env without store paths in config).
+    environment.systemPackages = lib.optionals useRocm rocmRuntimePkgs;
+
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall [ cfg.port ];
 
-    # ProtectSystem=strict needs stateDir before namespace setup (before preStart).
     systemd.tmpfiles.rules = [
       "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
     ];
@@ -162,6 +216,10 @@ in
       ++ lib.optional (!isLoopback cfg.host) ''
         services.panoptikon.host is "${cfg.host}" (not loopback). Ensure policies
         match that Host; seeded nixos.toml only allows localhost under allow_all.
+      ''
+      ++ lib.optional (cfg.accelerator == "auto") ''
+        services.panoptikon.accelerator is "auto". For AMD GPUs prefer
+        accelerator = "rocm" so this module installs HIP/HSA and grants KFD access.
       '';
 
     systemd.services.panoptikon = {
@@ -170,17 +228,30 @@ in
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
-      environment = {
-        PANOPTIKON_HOST = cfg.host;
-        PANOPTIKON_PORT = toString cfg.port;
-        PANOPTIKON_ACCELERATOR = cfg.accelerator;
-        PANOPTIKON_AUTO_SETUP = if cfg.autoSetup then "true" else "false";
-      }
-      // cfg.extraEnvironment;
+      environment =
+        {
+          PANOPTIKON_HOST = cfg.host;
+          PANOPTIKON_PORT = toString cfg.port;
+          PANOPTIKON_ACCELERATOR = cfg.accelerator;
+          PANOPTIKON_AUTO_SETUP = if cfg.autoSetup then "true" else "false";
+        }
+        // lib.optionalAttrs (cfg.rocmOverrideGfx != null) {
+          HSA_OVERRIDE_GFX_VERSION = cfg.rocmOverrideGfx;
+        }
+        // lib.optionalAttrs useRocm {
+          # Helps HIP tools; worker LD path is still filled by rocm_env at spawn.
+          ROCM_PATH = "${pkgs.rocmPackages.clr}";
+          HIP_PATH = "${pkgs.rocmPackages.clr}";
+        }
+        // cfg.extraEnvironment;
 
       path = [
         cfg.package
         pkgs.coreutils
+      ]
+      ++ lib.optionals useRocm [
+        pkgs.rocmPackages.rocminfo
+        pkgs.rocmPackages.rocm-smi
       ];
 
       preStart = ''
@@ -238,7 +309,8 @@ in
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;
-        PrivateDevices = cfg.accelerator == "cpu";
+        # GPU needs real DRM/KFD nodes (ollama-style).
+        PrivateDevices = !useGpu;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
@@ -250,11 +322,24 @@ in
         ReadWritePaths = [ root ] ++ cfg.readWritePaths;
         ReadOnlyPaths = cfg.libraryPaths;
 
-        BindReadOnlyPaths = lib.mkIf (cfg.accelerator != "cpu") [
-          "/run/opengl-driver"
-        ];
+        # Optional (-): VMs / headless hosts may lack /run/opengl-driver.
+        BindReadOnlyPaths = lib.optionals useGpu [ "-/run/opengl-driver" ];
 
-        DevicePolicy = if cfg.accelerator == "cpu" then "closed" else "auto";
+        # Match nixpkgs ollama GPU unit: closed policy + explicit DRM/KFD/NVIDIA.
+        DevicePolicy = "closed";
+        DeviceAllow = lib.optionals useGpu [
+          "char-drm"
+          "char-fb"
+          "char-kfd"
+          "char-nvidiactl"
+          "char-nvidia-caps"
+          "char-nvidia-frontend"
+          "char-nvidia-uvm"
+        ];
+        SupplementaryGroups = lib.optionals useGpu [
+          "render"
+          "video"
+        ];
       };
     };
   };

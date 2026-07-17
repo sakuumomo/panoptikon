@@ -226,6 +226,10 @@
             imports = [ ./nix/tests/panoptikon.nix ];
             defaults.imports = [ self.nixosModules.default ];
           };
+          panoptikon-nixos-rocm-config = pkgs.testers.runNixOSTest {
+            imports = [ ./nix/tests/panoptikon-rocm-config.nix ];
+            defaults.imports = [ self.nixosModules.default ];
+          };
         };
 
         devShells = {

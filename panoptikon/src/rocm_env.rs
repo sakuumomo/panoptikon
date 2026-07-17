@@ -79,11 +79,14 @@ pub fn worker_env() -> Vec<(String, String)> {
                 joined.to_string_lossy().into_owned(),
             ));
         }
-        if Path::new("/opt/rocm").is_dir() {
-            if env::var_os("ROCM_PATH").is_none() {
-                out.push(("ROCM_PATH".to_owned(), "/opt/rocm".to_owned()));
-            }
-            if env::var_os("HIP_PATH").is_none() {
+        // Prefer existing env (NixOS module sets ROCM_PATH to clr); else /opt/rocm.
+        if env::var_os("ROCM_PATH").is_none() && Path::new("/opt/rocm").is_dir() {
+            out.push(("ROCM_PATH".to_owned(), "/opt/rocm".to_owned()));
+        }
+        if env::var_os("HIP_PATH").is_none() {
+            if let Ok(rocm) = env::var("ROCM_PATH") {
+                out.push(("HIP_PATH".to_owned(), rocm));
+            } else if Path::new("/opt/rocm").is_dir() {
                 out.push(("HIP_PATH".to_owned(), "/opt/rocm".to_owned()));
             }
         }

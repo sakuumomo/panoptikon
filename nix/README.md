@@ -25,6 +25,7 @@ Host tools (see `panoptikon/src/host_paths.rs`) and setup:
 | Setup interpreter | `UV_PYTHON` + `UV_PYTHON_DOWNLOADS=never` (Nix CPython; no managed uv downloads / stub-ld) |
 | Thumbnail fonts | pure `FONTCONFIG_FILE` (DejaVu) |
 | CUDA `libcuda` | `/run/opengl-driver/lib` at runtime |
+| ROCm HIP/HSA | module with `accelerator = "rocm"` installs `rocmPackages` into the system profile (`/run/current-system/sw/lib`); also `/opt/rocm/lib` if present; package wrap prepends both; workers use `rocm_env` |
 | pdfium | venv `pypdfium2_raw` after setup |
 
 Desktop’s sidecar is that same wrapped binary, so first-boot auto-setup inherits `UV_PYTHON`.
@@ -53,7 +54,8 @@ Tauri `externalBin` sidecar (same pattern as release CI).
     enable = true;
     host = "127.0.0.1";
     port = 6342;
-    accelerator = "cpu"; # or cuda / rocm / auto
+    accelerator = "rocm"; # cpu | cuda | rocm | auto
+    # rocmOverrideGfx = "10.3.0"; # only if ISA mis-detected
     libraryPaths = [ "/mnt/media" ];
   };
 }
@@ -65,10 +67,14 @@ Service:
 - tmpfiles creates `stateDir` before start (`ProtectSystem=strict` needs it)
 - Seeds `nixos.toml` / inference example once into stateDir
 - When `autoSetup = true`, **preStart** runs `panoptikon setup --if-needed` so
-  multi-GB work is covered by `TimeoutStartSec` (restarts skip a full sync)
+  multi-GB work is covered by `TimeoutStartSec` (restarts skip a full sync);
+  with `accelerator = "rocm"` setup also HIP-probes the managed torch
 - Env: `PANOPTIKON_HOST`, `PORT`, `ACCELERATOR`, `AUTO_SETUP` (in-process auto_setup still
   handles a stale lockfile after start)
-- GPU: `BindReadOnlyPaths=/run/opengl-driver` when accelerator ≠ cpu
+- GPU (accelerator ≠ cpu): `/run/opengl-driver`, DRM/KFD `DeviceAllow`, user in
+  `render`+`video`
+- ROCm (`accelerator = "rocm"`): installs `clr`/runtime into system packages,
+  sets `ROCM_PATH`/`HIP_PATH`, puts `rocminfo` on the unit PATH
 - Warnings if `host` is non-loopback and/or `openFirewall` is set (not internet-hardened)
 
 **Do not** bind non-loopback / open the firewall without a reverse proxy and a
