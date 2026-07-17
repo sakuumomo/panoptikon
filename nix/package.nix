@@ -32,8 +32,7 @@
   # Flake passes monorepo `src`; nixpkgs uses fetchFromGitHub.
   src ? null,
   version ? "0.1.5",
-  # Same convention as other nixpkgs GPU packages: inherit from nixpkgs
-  # config, overridable via `.override { cudaSupport = true; }` (not both).
+  # nixpkgs GPU convention: config defaults, .override, not both true.
   config,
   cudaSupport ? config.cudaSupport or false,
   rocmSupport ? config.rocmSupport or false,
@@ -41,8 +40,6 @@
 
 assert lib.assertMsg (!(cudaSupport && rocmSupport)) ''
   panoptikon: cudaSupport and rocmSupport are mutually exclusive
-    (set only one of nixpkgs.config.cudaSupport / nixpkgs.config.rocmSupport,
-    or override a single flag)
 '';
 
 let

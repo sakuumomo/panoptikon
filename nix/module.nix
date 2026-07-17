@@ -1,5 +1,4 @@
-# services.panoptikon — --root stateDir; package wrap + host_paths for tools.
-# accelerator drives setup, devices, HIP install, and package cuda/rocmSupport wrap.
+# services.panoptikon: --root stateDir; accelerator → setup/devices/HIP/package wrap.
 {
   config,
   lib,

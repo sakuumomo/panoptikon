@@ -14,6 +14,7 @@
   glib-networking,
   gst_all_1,
   runCommand,
+  # Server sidecar (overridable: .override { panoptikon = panoptikon-rocm; }).
   panoptikon,
   src,
   version ? "0.1.5",
@@ -85,28 +86,32 @@ rustPlatform.buildRustPackage (finalAttrs: {
       --set-default WEBKIT_DISABLE_COMPOSITING_MODE 1
   '';
 
-  passthru.tests = {
-    install =
-      runCommand "panoptikon-desktop-test-install"
-        {
-          meta.timeout = 60;
-        }
-        ''
-          pkg=${finalAttrs.finalPackage}
-          test -x "$pkg/bin/panoptikon-desktop"
-          test -x "$pkg/bin/panoptikon"
-          test -x "$pkg/libexec/panoptikon-desktop/${sidecarName}"
-          grep -q UV_PYTHON "$pkg/bin/panoptikon"
-          grep -q PATH "$pkg/bin/panoptikon-desktop"
-          touch $out
-        '';
+  passthru = {
+    inherit panoptikon;
+    tests = {
+      install =
+        runCommand "panoptikon-desktop-test-install"
+          {
+            meta.timeout = 60;
+          }
+          ''
+            pkg=${finalAttrs.finalPackage}
+            test -x "$pkg/bin/panoptikon-desktop"
+            test -x "$pkg/bin/panoptikon"
+            test -x "$pkg/libexec/panoptikon-desktop/${sidecarName}"
+            grep -q UV_PYTHON "$pkg/bin/panoptikon"
+            grep -q PATH "$pkg/bin/panoptikon-desktop"
+            cmp -s "$pkg/bin/panoptikon" ${panoptikon}/bin/panoptikon
+            touch $out
+          '';
+    };
   };
 
   meta = {
     description = "Panoptikon Desktop tray app (Tauri) with bundled Server sidecar";
     longDescription = ''
-      Tauri v2 tray app with the wrapped panoptikon server as externalBin.
-      Needs a graphical session; use services.panoptikon for headless.
+      Tauri tray app; server sidecar is the overridable panoptikon argument
+      (PATH + externalBin). Graphical session required; headless: services.panoptikon.
     '';
     homepage = "https://github.com/reasv/panoptikon";
     license = lib.licenses.agpl3Plus;

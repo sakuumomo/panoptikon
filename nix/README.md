@@ -29,11 +29,22 @@ Do not put `/nix/store/...` tool paths into TOML.
 nix build .#panoptikon              # follows nixpkgs config (default CPU)
 nix build .#panoptikon-rocm         # .override { rocmSupport = true; }
 nix build .#panoptikon-cuda         # .override { cudaSupport = true; }
-nix build .#panoptikon-desktop
+nix build .#panoptikon-desktop      # sidecar = default panoptikon
+nix build .#panoptikon-desktop-rocm # sidecar = panoptikon-rocm
+nix build .#panoptikon-desktop-cuda
 nix develop
 ```
 
 Package flags are standard nixpkgs GPU args (`config.*` + `.override`, not both).
+
+Desktop embeds whatever `panoptikon` package it is given:
+
+```nix
+panoptikon-desktop.override {
+  panoptikon = panoptikon.override { rocmSupport = true; };
+}
+# or: panoptikon-desktop.override { panoptikon = panoptikon-rocm; }
+```
 
 ## NixOS module
 
@@ -106,15 +117,12 @@ Tests under `nix/tests/` are nixpkgs-style; the flake injects the module via
 ## Desktop package notes
 
 - Linux only in this flake (WebKitGTK 4.1).
-- Produces a native `panoptikon-desktop` binary + `panoptikon` sidecar on
-  `PATH` next to it — not AppImage/DMG/NSIS (use upstream releases for those).
+- Server binary is the overridable `panoptikon` argument (`passthru.panoptikon`),
+  installed on `PATH` and as Tauri `externalBin` — not AppImage/DMG/NSIS.
 - Updater artifact signing is disabled at build time (`createUpdaterArtifacts`).
 - Needs a graphical session / tray; not a systemd service (use
   `services.panoptikon` for headless server).
-- Install smoke (`passthru.tests.install`) only checks binary layout and wrap;
-  it does **not** launch a tray or exercise first-boot setup. First Desktop
-  start still runs the sidecar’s normal setup path (multi-GB wheels when
-  auto_setup is on) under the user’s session, not under the NixOS module.
+- Install smoke checks layout/wrap only (no tray / first-boot setup).
 
 ## Gaps
 

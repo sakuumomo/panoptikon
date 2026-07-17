@@ -53,15 +53,23 @@
         in
         cargo.package.version;
 
-      packageOverlay = final: prev: {
+      packageOverlay = final: prev: rec {
         panoptikon = final.callPackage ./nix/package.nix {
           src = panoptikonSrc;
           version = packageVersion;
         };
+        panoptikon-rocm = panoptikon.override { rocmSupport = true; };
+        panoptikon-cuda = panoptikon.override { cudaSupport = true; };
+        # Sidecar panoptikon comes from callPackage; override freely.
         panoptikon-desktop = final.callPackage ./nix/desktop.nix {
           src = panoptikonSrc;
           version = packageVersion;
-          panoptikon = final.panoptikon;
+        };
+        panoptikon-desktop-rocm = panoptikon-desktop.override {
+          panoptikon = panoptikon-rocm;
+        };
+        panoptikon-desktop-cuda = panoptikon-desktop.override {
+          panoptikon = panoptikon-cuda;
         };
       };
     in
@@ -194,14 +202,11 @@
       in
       {
         packages = {
-          # Default follows nixpkgs config (CPU unless config.cuda/rocmSupport).
           default = pkgs.panoptikon;
-          panoptikon = pkgs.panoptikon;
-          panoptikon-cuda = pkgs.panoptikon.override { cudaSupport = true; };
-          panoptikon-rocm = pkgs.panoptikon.override { rocmSupport = true; };
+          inherit (pkgs) panoptikon panoptikon-cuda panoptikon-rocm;
         }
         // lib.optionalAttrs isLinux {
-          panoptikon-desktop = pkgs.panoptikon-desktop;
+          inherit (pkgs) panoptikon-desktop panoptikon-desktop-rocm panoptikon-desktop-cuda;
         };
 
         checks = {
@@ -212,7 +217,7 @@
         // lib.optionalAttrs isLinux {
           panoptikon-desktop = pkgs.panoptikon-desktop;
           panoptikon-desktop-install = pkgs.panoptikon-desktop.passthru.tests.install;
-          # Outer pkgs already carries packageOverlay; runNixOSTest freezes overlays.
+          # pkgs already has the overlay; runNixOSTest freezes overlays.
           panoptikon-nixos = pkgs.testers.runNixOSTest {
             imports = [ ./nix/tests/panoptikon.nix ];
             defaults.imports = [ self.nixosModules.default ];
