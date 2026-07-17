@@ -1,0 +1,133 @@
+# Panoptikon server config for Nix / NixOS (seeded into the *state* root).
+#
+# Package install path: $out/share/panoptikon/nixos.toml
+# Service copies this once to <stateDir>/config/server/default.toml and never
+# overwrites it again — edit the state copy after first boot.
+#
+# Runtime layout with `panoptikon --root <stateDir>` (required; store is RO):
+#   <state>/config/     — this file + user inference TOMLs
+#   <state>/data/       — SQLite DBs, logs, thumbnails
+#   <state>/runtime/    — extracted embedded Python (pysrc/) + managed venv/
+#   <state>/runtime/ui/ — extracted embedded Next.js standalone (bundled-ui)
+#   <state>/.env        — optional env-template values
+#
+# Tool resolution matches current server code (host_paths.rs + media_tools +
+# ui::resolve_node):
+#   - Bare names (node/ffmpeg/ffprobe) resolve via PATH (package wrap).
+#   - Thumbnail fonts: fontconfig (fc-match); package sets FONTCONFIG_FILE.
+#   - Chromium: PATH / profile bins when html_renderer is unset.
+#   - pdfium: managed venv pypdfium2_raw after setup when PDFIUM_PATH unset.
+#   - Unrunnable venv ELFs (static-ffmpeg, nodejs-wheel on stub-ld) are skipped.
+
+data_folder = "data"
+
+[logging]
+# Journald captures stdout/stderr.
+file = ""
+level = "${LOGLEVEL:-INFO}"
+
+[server]
+host = "${PANOPTIKON_HOST:-127.0.0.1}"
+port = "${PANOPTIKON_PORT:-6342}"
+trust_forwarded_headers = true
+
+[upstreams.ui]
+base_url = "http://127.0.0.1:6340"
+local = true
+# No UI checkout under the state root: use the UI bundle embedded in the
+# binary (cargo feature bundled-ui → runtime/ui/<version>/).
+dir = "no-checkout-use-embedded-bundle"
+# Bare name → PATH (wrapped Nix nodejs). Runnable nodejs-wheel in the venv
+# would also work, but is skipped when it fails to spawn (NixOS stub-ld).
+node = "node"
+
+[upstreams.api]
+# Unused for routing when local = true; keep in sync with the gateway port
+# for any client that still reads this URL.
+base_url = "http://127.0.0.1:${PANOPTIKON_PORT:-6342}"
+local = true
+
+[inference_local]
+enabled = true
+
+[inference_local.python_env]
+# auto | cpu | cuda | rocm — service sets PANOPTIKON_ACCELERATOR.
+accelerator = "${PANOPTIKON_ACCELERATOR:-auto}"
+# First start may multi-GB uv sync into <state>/runtime/venv.
+auto_setup = "${PANOPTIKON_AUTO_SETUP:-true}"
+
+[search]
+embedding_cache_size = 1024
+
+[jobs]
+# Bare names → PATH (wrapped Nix ffmpeg). static-ffmpeg in the venv is only
+# used when those binaries actually run (media_tools can_spawn check).
+ffmpeg = "ffmpeg"
+ffprobe = "ffprobe"
+# Empty → host_paths: venv libpdfium.so, then system.
+pdfium = "${PDFIUM_PATH:-}"
+# Empty → host_paths: chromium on PATH / /run/current-system/sw/bin / FHS.
+html_renderer = "${HTML_RENDERER_PATH:-}"
+# Empty → host_paths: fc-match / XDG_DATA_DIRS / FHS (package sets FONTCONFIG_FILE).
+thumbnail_font = "${PANOPTIKON_FONT:-}"
+
+# --------- Rulesets ---------
+
+[rulesets.allow_all]
+allow_all = true
+
+[rulesets.restricted_demo]
+allow = [
+    { methods = [
+        "GET",
+    ], path_prefix = "/docs" },
+    { methods = [
+        "GET",
+    ], path = "/openapi.json" },
+
+    { methods = [
+        "GET",
+        "POST",
+    ], path_prefix = "/api/search/" },
+    { methods = [
+        "GET",
+    ], path_prefix = "/api/items/" },
+
+    { methods = [
+        "GET",
+        "POST",
+        "DELETE",
+        "PUT",
+    ], path_prefix = "/api/bookmarks/" },
+
+    { methods = [
+        "GET",
+    ], path = "/api/db" },
+
+    { methods = [
+        "GET",
+    ], path = "/api/inference/cache" },
+]
+
+# --------- Policies ---------
+
+[[policies]]
+name = "localhost"
+ruleset = "allow_all"
+
+[policies.match]
+hosts = ["localhost", "127.0.0.1"]
+
+[policies.index_db]
+default = "default"
+allow = "*"
+
+[policies.user_data_db]
+default = "default"
+allow = "*"
+
+# SECURITY: the seeded policy only matches localhost / 127.0.0.1 with
+# ruleset allow_all. When binding non-loopback (PANOPTIKON_HOST=0.0.0.0) or
+# exposing via reverse proxy, add a policy for that Host and prefer
+# ruleset = "restricted_demo" (or a tighter custom ruleset). Do not open the
+# firewall to the public internet without auth in front of the gateway.
