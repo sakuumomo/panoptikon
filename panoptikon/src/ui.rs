@@ -589,18 +589,8 @@ fn absolutize(path: PathBuf) -> PathBuf {
     std::path::absolute(&path).unwrap_or(path)
 }
 
-/// Node binary resolution, in order:
-/// 1. `upstreams.ui.node` from config — a bare name is left for PATH
-///    lookup, a path is absolutized against the CWD (like `dir`).
-/// 2. The managed venv's nodejs-wheel node (`python/.venv`, then the legacy
-///    root `.venv` of pre-restructure installs; `runtime/venv` when a
-///    `bundled` build runs from its extracted source set), relative to
-///    `base` (the CWD). The pip entry point (`.venv/Scripts/node.exe` /
-///    `.venv/bin/node`) is a launcher stub that re-execs the real binary
-///    through Python, so the actual node inside the `nodejs_wheel` package
-///    is preferred — running it directly drops the Python hop and puts
-///    npm-cli.js findably next to it. The stub remains a fallback.
-/// 3. `node` from PATH.
+/// Node: config (bare → PATH, path → absolutize) → runnable venv nodejs-wheel
+/// → bare `node` on PATH. Skips unrunnable venv ELFs (e.g. NixOS stub-ld).
 fn resolve_node(explicit: Option<&Path>, base: &Path) -> PathBuf {
     if let Some(node) = explicit {
         return if node.parent().is_some_and(|dir| !dir.as_os_str().is_empty()) {
@@ -611,7 +601,9 @@ fn resolve_node(explicit: Option<&Path>, base: &Path) -> PathBuf {
     }
     venv_node_candidates(base)
         .into_iter()
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| {
+            candidate.is_file() && crate::host_paths::can_spawn(candidate, &["-v"])
+        })
         .map(absolutize)
         .unwrap_or_else(|| PathBuf::from("node"))
 }
@@ -807,8 +799,9 @@ mod tests {
     }
 
     /// Node resolution order: explicit config value wins (bare names kept
-    /// for PATH lookup, paths absolutized); then the venv's nodejs-wheel
-    /// node under the given base dir (absolutized); then PATH.
+    /// for PATH lookup, paths absolutized); then a *runnable* venv
+    /// nodejs-wheel node; then PATH. Empty/unrunnable venv stubs (NixOS
+    /// stub-ld, zero-byte test fixtures) must not beat PATH.
     #[test]
     fn resolve_node_order() {
         let base = tempfile::tempdir().unwrap();
@@ -816,15 +809,26 @@ mod tests {
         // Nothing exists: bare "node" from PATH.
         assert_eq!(resolve_node(None, base.path()), PathBuf::from("node"));
 
-        // A venv candidate exists: picked over PATH (base is already
-        // absolute here, so absolutization is the identity).
+        // A venv file exists but is not runnable: fall through to PATH.
         let venv_node = venv_node_candidates(base.path())
             .last()
             .cloned()
             .expect("candidate list is never empty");
         std::fs::create_dir_all(venv_node.parent().unwrap()).unwrap();
         std::fs::write(&venv_node, "").unwrap();
-        assert_eq!(resolve_node(None, base.path()), venv_node);
+        assert_eq!(resolve_node(None, base.path()), PathBuf::from("node"));
+
+        // A runnable venv candidate is preferred over bare PATH.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // `node -v` success: a tiny shell script is enough for discovery.
+            std::fs::write(&venv_node, "#!/bin/sh\necho v0.0.0-test\n").unwrap();
+            let mut perms = std::fs::metadata(&venv_node).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&venv_node, perms).unwrap();
+            assert_eq!(resolve_node(None, base.path()), venv_node);
+        }
 
         // Explicit relative path wins and is absolutized against the CWD
         // (children chdir into the UI checkout, which would re-anchor it).
@@ -839,13 +843,18 @@ mod tests {
         );
 
         // Windows: the real nodejs_wheel binary is preferred over the
-        // Scripts launcher stub when both exist.
-        let candidates = venv_node_candidates(base.path());
-        if candidates.len() > 1 {
-            let preferred = &candidates[0];
-            std::fs::create_dir_all(preferred.parent().unwrap()).unwrap();
-            std::fs::write(preferred, "").unwrap();
-            assert_eq!(&resolve_node(None, base.path()), preferred);
+        // Scripts launcher stub when both exist and are runnable. Creating a
+        // real runnable PE in-unit is awkward; skip when not unix.
+        #[cfg(windows)]
+        {
+            let candidates = venv_node_candidates(base.path());
+            if candidates.len() > 1 {
+                // Unrunnable files still fall through (same as empty stub).
+                let preferred = &candidates[0];
+                std::fs::create_dir_all(preferred.parent().unwrap()).unwrap();
+                std::fs::write(preferred, "").unwrap();
+                assert_eq!(resolve_node(None, base.path()), PathBuf::from("node"));
+            }
         }
     }
 
