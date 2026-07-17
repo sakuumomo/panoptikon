@@ -73,7 +73,8 @@ let
     makeCacheWritable = true;
     npmFlags = [ "--include=dev" ];
 
-    postPatch = ''
+    # Not postPatch: npm-deps fetch has no node on PATH.
+    preBuild = ''
       mkdir -p app/fonts
       cp ${inter}/share/fonts/truetype/InterVariable.ttf app/fonts/InterVariable.ttf
       node ${./patch-ui-offline-font.mjs} app/layout.tsx

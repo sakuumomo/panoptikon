@@ -105,6 +105,7 @@
             libglvnd
             glib
             zlib
+            zstd
             stdenv.cc.cc.lib
             libx11
             libxext
@@ -181,17 +182,25 @@
           else
             null;
 
+        # HIP runtime + tools for pytorch.org multi-arch rocm7.2 wheels.
+        # Fat wheels vendor most math libs; host needs HIP/HSA (and zstd).
         rocmShell =
           if isLinux && isX86_64 then
             mkPanoptikonShell {
               name = "rocm";
               accelerator = "rocm";
-              extraPackages = with pkgs.rocmPackages; [
-                clr
-                rocm-runtime
-                rocm-device-libs
-                rocm-smi
-              ];
+              extraPackages =
+                (with pkgs.rocmPackages; [
+                  clr
+                  rocm-runtime
+                  rocm-device-libs
+                  rocm-smi
+                  rocminfo
+                ])
+                ++ (with pkgs; [
+                  numactl
+                  zstd
+                ]);
             }
           else
             null;
