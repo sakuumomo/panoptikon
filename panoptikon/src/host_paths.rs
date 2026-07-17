@@ -1,6 +1,5 @@
-//! Host tool/asset discovery without baking `/nix/store` paths into config.
-//!
-//! Order: explicit config → PATH / Nix profile bins → fontconfig / XDG → FHS.
+//! Host tool/asset discovery (no `/nix/store` paths in config).
+//! Config → PATH / Nix profiles → fontconfig / XDG → FHS.
 
 use std::env;
 use std::fs;

@@ -45,9 +45,7 @@ cu128 = [
     "nvidia-cublas-cu12>=12.1.3.1; sys_platform == 'linux' or sys_platform == 'win32'",
     "nvidia-cudnn-cu12>=9.1.0.70; sys_platform == 'linux' or sys_platform == 'win32'",
 ]
-# ROCm 7.2 (Linux x86_64): pytorch.org multi-arch fat wheels (incl. gfx1030).
-# Not AMD repo.radeon.com `.lw` builds — those omit RDNA2 code objects.
-# Torch 2.11 vs cpu/cu128 2.7.1; constraint-dependencies allow both in one lock.
+# ROCm 7.2 multi-arch (pytorch.org; not AMD .lw). Torch 2.11; cpu/cu128 stay 2.7.1.
 rocm = [
     "torch==2.11.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision==0.26.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -88,7 +86,7 @@ override-dependencies = ["twine; python_version < '0'"]
 # The accelerator extras are mutually exclusive: conflicts lets one universal
 # uv.lock carry all variants while `uv sync --extra <one>` installs exactly one.
 conflicts = [[{ extra = "cpu" }, { extra = "cu128" }, { extra = "rocm" }]]
-# cpu/cu128 pin 2.7.1; rocm pins 2.11.0 — range keeps both forks in one lock.
+# Range spans cpu/cu128 (2.7.1) and rocm (2.11.0) in one lock.
 constraint-dependencies = [
     "torch>=2.7.1,<=2.11.0",
     "torchvision>=0.22.1,<=0.26.0",

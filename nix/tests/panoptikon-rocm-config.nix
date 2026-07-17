@@ -1,5 +1,4 @@
-# Evaluate-time style checks via a VM: service unit includes ROCm wiring
-# (HIP packages, KFD, render group) without requiring a physical GPU.
+# ROCm wiring when services.panoptikon.accelerator = "rocm".
 {
   name = "panoptikon-rocm-config";
   meta.maintainers = [ ];
@@ -21,19 +20,25 @@
     machine.wait_for_unit("panoptikon.service")
     machine.wait_for_open_port(6342)
 
-    # Unit exposes ROCm/GPU hardening knobs from the module.
     unit = machine.succeed("systemctl cat panoptikon.service")
-    assert "DeviceAllow" in unit or "DeviceAllow=" in unit or "char-kfd" in unit
+    assert "char-kfd" in unit
     assert "render" in unit
     machine.succeed("systemctl show panoptikon.service -p SupplementaryGroups --value | grep -q render")
 
-    # HIP runtime landed on the system profile (module environment.systemPackages).
-    machine.succeed("test -e /run/current-system/sw/lib/libamdhip64.so || test -e /run/current-system/sw/lib/libamdhip64.so.7 || ls /run/current-system/sw/lib/libamdhip64.so*")
+    machine.succeed(
+        "test -e /run/current-system/sw/lib/libamdhip64.so "
+        "|| test -e /run/current-system/sw/lib/libamdhip64.so.7"
+    )
 
-    # Service environment for ROCm paths.
     env = machine.succeed("systemctl show panoptikon.service -p Environment --value")
     assert "PANOPTIKON_ACCELERATOR=rocm" in env
     assert "ROCM_PATH=" in env
+
+    # Package rebuilt with rocmSupport (host HIP paths in wrap).
+    exe = machine.succeed(
+        "systemctl cat panoptikon.service | sed -n 's|^ExecStart=\\([^ ]*\\).*|\\1|p' | head -1"
+    ).strip()
+    machine.succeed(f"grep -q '/opt/rocm/lib' '{exe}'")
 
     machine.succeed("systemctl is-active panoptikon.service")
     machine.wait_until_succeeds(

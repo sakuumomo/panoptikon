@@ -1,48 +1,39 @@
 # Nix packaging for Panoptikon
 
-Package and NixOS module for the **current** Rust-era monorepo (bundled server
-+ host_paths discovery + `--root` state layout).
+Bundled server + host_paths + `--root` state. Flake input: `nixpkgs` (unstable).
 
-**Flake input:** `nixpkgs` → `nixos-unstable`  
-**Hosts:** NixOS 26.05 and current unstable (keep attrs dual-compatible)
+## Runtime contract
 
-## Runtime contract (must match `panoptikon` code)
-
-| Flag / path | Meaning |
+| Path | Meaning |
 | --- | --- |
-| `--root <dir>` | chdir base for all relative paths (required outside a checkout) |
-| `--config <file>` | server TOML (module seeds under `<root>/config/…`) |
-| `<root>/runtime/pysrc/` | extracted embedded Python (`bundled`) |
-| `<root>/runtime/ui/` | extracted Next standalone (`bundled-ui`) |
-| `<root>/runtime/venv` | managed uv venv (`panoptikon setup` / auto_setup) |
-| `<root>/data/` | DBs / logs (`data_folder`) |
+| `--root <dir>` | chdir base (required outside a checkout) |
+| `<root>/config/` | server + inference TOML (module seeds once) |
+| `<root>/runtime/{pysrc,ui,venv}/` | embedded Python, UI, managed uv venv |
+| `<root>/data/` | DBs / logs |
 
-Host tools (see `panoptikon/src/host_paths.rs`) and setup:
-
-| Need | How the package provides it |
+| Need | Source |
 | --- | --- |
-| `node`, `ffmpeg`, `uv`, `chromium`, `fc-match`, `python3.12` | wrap `PATH` |
-| Setup interpreter | `UV_PYTHON` + `UV_PYTHON_DOWNLOADS=never` (Nix CPython; no managed uv downloads / stub-ld) |
-| Thumbnail fonts | pure `FONTCONFIG_FILE` (DejaVu) |
-| CUDA `libcuda` | `/run/opengl-driver/lib` at runtime |
-| ROCm HIP/HSA | module with `accelerator = "rocm"` installs `rocmPackages` into the system profile (`/run/current-system/sw/lib`); also `/opt/rocm/lib` if present; package wrap prepends both; workers use `rocm_env` |
-| pdfium | venv `pypdfium2_raw` after setup |
+| `node` / `ffmpeg` / `uv` / `chromium` / `fc-match` / `python3.12` | package `PATH` wrap |
+| Setup interpreter | `UV_PYTHON` + `UV_PYTHON_DOWNLOADS=never` |
+| Label fonts | `FONTCONFIG_FILE` (DejaVu) |
+| CUDA / ROCm (package) | nixpkgs `config.cudaSupport` / `rocmSupport` (or `.override`) |
+| CUDA / ROCm (service) | `services.panoptikon.accelerator` → devices, HIP, setup, package wrap |
+| Workers HIP | `rocm_env` + wrap when package has `rocmSupport` |
+| pdfium | venv after setup |
 
-Desktop’s sidecar is that same wrapped binary, so first-boot auto-setup inherits `UV_PYTHON`.
-
-Do not put `/nix/store/...` paths into TOML for those.
+Do not put `/nix/store/...` tool paths into TOML.
 
 ## Build (this tree)
 
 ```bash
-nix build .#panoptikon              # server (bundled + bundled-ui)
-nix build .#panoptikon-desktop      # Tauri tray app + server sidecar
-nix develop                         # dev shell (includes WebKit for desktop)
+nix build .#panoptikon              # follows nixpkgs config (default CPU)
+nix build .#panoptikon-rocm         # .override { rocmSupport = true; }
+nix build .#panoptikon-cuda         # .override { cudaSupport = true; }
+nix build .#panoptikon-desktop
+nix develop
 ```
 
-Package `src` is a filtered copy of **this** checkout, so server code
-(`host_paths`, etc.) matches the tree. Desktop reuses `.#panoptikon` as the
-Tauri `externalBin` sidecar (same pattern as release CI).
+Package flags are standard nixpkgs GPU args (`config.*` + `.override`, not both).
 
 ## NixOS module
 
@@ -50,35 +41,24 @@ Tauri `externalBin` sidecar (same pattern as release CI).
 {
   imports = [ inputs.panoptikon.nixosModules.default ];
   nixpkgs.overlays = [ inputs.panoptikon.overlays.default ];
+  # optional: nixpkgs.config.rocmSupport = true;  # default accelerator becomes "rocm"
   services.panoptikon = {
     enable = true;
     host = "127.0.0.1";
     port = 6342;
     accelerator = "rocm"; # cpu | cuda | rocm | auto
-    # rocmOverrideGfx = "10.3.0"; # only if ISA mis-detected
+    # rocmOverrideGfx = "10.3.0";
     libraryPaths = [ "/mnt/media" ];
   };
 }
 ```
 
-Service:
-
-- `ExecStart`: `panoptikon --root <stateDir> --config <stateDir>/config/server/default.toml --disable-update-check`
-- tmpfiles creates `stateDir` before start (`ProtectSystem=strict` needs it)
-- Seeds `nixos.toml` / inference example once into stateDir
-- When `autoSetup = true`, **preStart** runs `panoptikon setup --if-needed` so
-  multi-GB work is covered by `TimeoutStartSec` (restarts skip a full sync);
-  with `accelerator = "rocm"` setup also HIP-probes the managed torch
-- Env: `PANOPTIKON_HOST`, `PORT`, `ACCELERATOR`, `AUTO_SETUP` (in-process auto_setup still
-  handles a stale lockfile after start)
-- GPU (accelerator ≠ cpu): `/run/opengl-driver`, DRM/KFD `DeviceAllow`, user in
-  `render`+`video`
-- ROCm (`accelerator = "rocm"`): installs `clr`/runtime into system packages,
-  sets `ROCM_PATH`/`HIP_PATH`, puts `rocminfo` on the unit PATH
-- Warnings if `host` is non-loopback and/or `openFirewall` is set (not internet-hardened)
-
-**Do not** bind non-loopback / open the firewall without a reverse proxy and a
-matching non-loopback policy (seeded config only allows localhost under `allow_all`).
+- **`accelerator`** drives setup, devices, and rebuilds `package` with matching
+  `cudaSupport` / `rocmSupport` (nixpkgs package flags — not both)
+- Default accelerator: `rocm` / `cuda` if that nixpkgs config flag alone is set, else `cpu`
+- `rocm`: HIP packages, KFD, `ROCM_PATH`/`HIP_PATH`, wrap with host HIP paths
+- `cuda`: NVIDIA devices, opengl-driver bind, CUDA package wrap
+- Do not expose non-loopback without a reverse proxy + matching policy
 
 ## Manual run of the built package
 
@@ -102,15 +82,15 @@ nix build .#checks.x86_64-linux.panoptikon-install
 nix build .#checks.x86_64-linux.panoptikon-desktop-install
 ```
 
-NixOS service VM test (`autoSetup = false`, curls `/api/client-config`):
+NixOS VM tests (`autoSetup = false`):
 
 ```bash
 nix build .#checks.x86_64-linux.panoptikon-nixos
+nix build .#checks.x86_64-linux.panoptikon-nixos-rocm-config
 ```
 
-The service test file is **`nix/tests/panoptikon.nix`** — written for
-nixpkgs (`nixos/tests/…`), free of flake-local imports. The flake injects
-`nixosModules.default` via `defaults.imports` when running the check.
+Tests under `nix/tests/` are nixpkgs-style; the flake injects the module via
+`defaults.imports`.
 
 ## Submitting to nixpkgs
 

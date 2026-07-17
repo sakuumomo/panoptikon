@@ -182,33 +182,23 @@
           else
             null;
 
-        # HIP runtime + tools for pytorch.org multi-arch rocm7.2 wheels.
-        # Fat wheels vendor most math libs; host needs HIP/HSA (and zstd).
         rocmShell =
           if isLinux && isX86_64 then
             mkPanoptikonShell {
               name = "rocm";
               accelerator = "rocm";
-              extraPackages =
-                (with pkgs.rocmPackages; [
-                  clr
-                  rocm-runtime
-                  rocm-device-libs
-                  rocm-smi
-                  rocminfo
-                ])
-                ++ (with pkgs; [
-                  numactl
-                  zstd
-                ]);
+              extraPackages = import ./nix/rocm-packages.nix { inherit pkgs; };
             }
           else
             null;
       in
       {
         packages = {
+          # Default follows nixpkgs config (CPU unless config.cuda/rocmSupport).
           default = pkgs.panoptikon;
           panoptikon = pkgs.panoptikon;
+          panoptikon-cuda = pkgs.panoptikon.override { cudaSupport = true; };
+          panoptikon-rocm = pkgs.panoptikon.override { rocmSupport = true; };
         }
         // lib.optionalAttrs isLinux {
           panoptikon-desktop = pkgs.panoptikon-desktop;

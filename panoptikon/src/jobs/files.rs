@@ -2005,7 +2005,6 @@ fn pdfium() -> Option<&'static Pdfium> {
             let mut file_candidates: Vec<PathBuf> = Vec::new();
             let mut dir_candidates: Vec<PathBuf> = Vec::new();
             if let Some(custom) = &crate::config::runtime().pdfium {
-                // Config may name either the library file or a directory.
                 if custom.is_file() {
                     file_candidates.push(custom.clone());
                 } else {

@@ -208,10 +208,9 @@ out of scope for the initial release.
   but it is debt: the UI server should eventually get a properly-managed Node
   (or no Node at all). Docker images will install Node natively rather than
   inherit this.
-- **ROCm (Linux x86_64):** pytorch.org multi-arch `rocm7.2` wheels
-  (`torch==2.11.0+rocm7.2`, includes gfx1030+). Not AMD `.lw` manylinux
-  wheels (omit RDNA2). Host userspace ROCm 7.2.x; workers get HIP paths via
-  `rocm_env`; setup probes a HIP kernel. cpu/cu128 remain torch 2.7.1.
+- **ROCm (Linux x86_64):** pytorch.org multi-arch `rocm7.2` (`torch` 2.11;
+  not AMD `.lw`). Host ROCm 7.2.x; `rocm_env` + setup HIP probe. cpu/cu128
+  remain torch 2.7.1.
 - **`cudnn/` vendored dir** remains supported as a legacy fallback path in the
   worker's cuDNN setup.
 

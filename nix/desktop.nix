@@ -69,7 +69,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
                      '"createUpdaterArtifacts": false'
   '';
 
-  # Only wrap the desktop binary (sidecar is already a makeWrapper script).
+  # Sidecar is already wrapped; only wrap the tray binary.
   dontWrapGApps = true;
 
   postInstall = ''

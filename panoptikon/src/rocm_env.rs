@@ -1,16 +1,14 @@
-//! ROCm/HIP library discovery for Linux inference workers and setup probes.
+//! Host HIP/HSA discovery for Linux inference workers and setup probes.
 //!
-//! Prebuilt ROCm torch still needs host HIP/HSA on the loader path (NixOS:
-//! `/opt/rocm`, profile `lib`, `/run/opengl-driver`). Workers get those dirs
-//! via [`worker_env`]; `panoptikon setup --accelerator rocm` runs
-//! [`probe_rocm_torch`] so missing GPU code objects fail setup clearly.
+//! ROCm torch needs host HIP on `LD_LIBRARY_PATH`. Workers use [`worker_env`];
+//! `panoptikon setup --accelerator rocm` runs [`probe_rocm_torch`].
 
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-/// ROCm/HIP lib dirs to prepend, in discovery order (existing only).
+/// Existing HIP/HSA (or NixOS opengl-driver) lib dirs, discovery order.
 pub fn rocm_library_dirs() -> Vec<PathBuf> {
     #[cfg(not(target_os = "linux"))]
     {
@@ -33,7 +31,7 @@ pub fn rocm_library_dirs() -> Vec<PathBuf> {
     }
 }
 
-/// Filter to directories that exist and look like a HIP/HSA (or host driver) lib dir.
+/// Keep dirs that exist and look like HIP/HSA or the NixOS driver tree.
 pub fn select_existing_rocm_lib_dirs(candidates: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for dir in candidates {
@@ -58,12 +56,12 @@ fn is_rocm_related_lib_dir(dir: &Path) -> bool {
     if MARKERS.iter().any(|name| dir.join(name).is_file()) {
         return true;
     }
-    // NixOS kernel client libs (no HIP .so markers of their own).
+    // NixOS Mesa/AMD client libs (no HIP .so markers of their own).
     dir.ends_with("opengl-driver/lib")
 }
 
-/// Linux worker env: prepend HIP/HSA dirs to `LD_LIBRARY_PATH`; set
-/// `ROCM_PATH`/`HIP_PATH` to `/opt/rocm` when present and unset. Empty elsewhere.
+/// Prepend HIP dirs to `LD_LIBRARY_PATH`; default `ROCM_PATH`/`HIP_PATH` to
+/// `/opt/rocm` when unset. Empty on non-Linux.
 pub fn worker_env() -> Vec<(String, String)> {
     #[cfg(not(target_os = "linux"))]
     {
@@ -72,14 +70,12 @@ pub fn worker_env() -> Vec<(String, String)> {
     #[cfg(target_os = "linux")]
     {
         let mut out = Vec::new();
-        let dirs = rocm_library_dirs();
-        if let Some(joined) = merge_ld_library_path(&dirs) {
+        if let Some(joined) = merge_ld_library_path(&rocm_library_dirs()) {
             out.push((
                 "LD_LIBRARY_PATH".to_owned(),
                 joined.to_string_lossy().into_owned(),
             ));
         }
-        // Prefer existing env (NixOS module sets ROCM_PATH to clr); else /opt/rocm.
         if env::var_os("ROCM_PATH").is_none() && Path::new("/opt/rocm").is_dir() {
             out.push(("ROCM_PATH".to_owned(), "/opt/rocm".to_owned()));
         }
@@ -105,7 +101,7 @@ fn merge_ld_library_path(prepend: &[PathBuf]) -> Option<OsString> {
     env::join_paths(entries).ok()
 }
 
-/// Exit 0: ok or no GPU. Non-zero: GPU present but a trivial HIP kernel fails.
+// Exit 0: ok or no GPU. Non-zero: GPU present but HIP kernel fails.
 const ROCM_TORCH_PROBE: &str = r#"
 import sys
 import torch
@@ -114,12 +110,7 @@ ver = getattr(torch, "__version__", "")
 print(f"torch {ver}")
 print(f"hip {getattr(torch.version, 'hip', None)}")
 if ".lw." in ver:
-    print(
-        "note: AMD lightweight (.lw) ROCm wheels often omit consumer GPU "
-        "code objects (e.g. gfx1030); Panoptikon uses pytorch.org multi-arch "
-        "rocm7.2 wheels.",
-        file=sys.stderr,
-    )
+    print("note: AMD .lw wheels often lack consumer GPU code objects", file=sys.stderr)
 if not torch.cuda.is_available():
     print("no HIP GPU visible (ok on headless hosts)")
     raise SystemExit(0)
@@ -129,16 +120,12 @@ try:
     float(t.sum())
 except Exception as exc:
     print(f"GPU kernel launch failed: {exc}", file=sys.stderr)
-    print(
-        "hint: use pytorch.org multi-arch rocm7.2 wheels (not AMD .lw builds "
-        "that only ship gfx942/950/1201). Host userspace should be ROCm 7.2.x.",
-        file=sys.stderr,
-    )
+    print("hint: use pytorch.org multi-arch rocm7.2 wheels + ROCm 7.2.x userspace", file=sys.stderr)
     raise SystemExit(2)
 print("rocm_gpu_probe_ok")
 "#;
 
-/// Probe managed ROCm torch after setup. Soft-ok if no GPU; Err if kernels fail.
+/// Soft-ok if no GPU; Err if a trivial HIP kernel fails on a visible device.
 pub async fn probe_rocm_torch(interpreter: &Path) -> anyhow::Result<()> {
     let output = tokio::process::Command::new(interpreter)
         .arg("-c")
@@ -176,8 +163,7 @@ pub async fn probe_rocm_torch(interpreter: &Path) -> anyhow::Result<()> {
     anyhow::bail!(
         "ROCm torch GPU probe failed (exit {code}). \
          stdout:\n{stdout}\nstderr:\n{stderr}\n\
-         Use pytorch.org multi-arch rocm7.2 wheels (python/pyproject.toml) and \
-         ROCm 7.2.x userspace (/opt/rocm). Avoid AMD .lw wheels without this GPU's arch."
+         Use pytorch.org multi-arch rocm7.2 wheels and ROCm 7.2.x userspace."
     );
 }
 

@@ -1,7 +1,5 @@
-# NixOS module: services.panoptikon
-# Runtime: --root stateDir (never /nix/store); tools via package wrap + host_paths.
-# GPU: accelerator cpu|cuda|rocm|auto; ROCm installs HIP/HSA into the system
-# profile and grants the service user render/video + DRM/KFD device access.
+# services.panoptikon — --root stateDir; tools via package wrap + host_paths.
+# accelerator selects setup + GPU wiring (same effects as package cuda/rocmSupport).
 {
   config,
   lib,
@@ -23,29 +21,32 @@ let
 
   root = cfg.stateDir;
   serverConfig = "${root}/config/server/default.toml";
-  panoptikonBin = "${cfg.package}/bin/panoptikon";
 
-  useGpu = cfg.accelerator != "cpu";
   useRocm = cfg.accelerator == "rocm";
   useCuda = cfg.accelerator == "cuda";
+  # auto: allow GPU devices for host detect; no HIP install (set rocm explicitly for AMD).
+  useGpu = cfg.accelerator != "cpu";
 
-  # HIP/HSA for pytorch.org multi-arch rocm7.2 wheels. Fat wheels vendor most
-  # math libs; the process still needs the host HIP runtime on the loader path.
-  # systemPackages places these under /run/current-system/sw/lib so
-  # panoptikon's rocm_env discovery (and the package wrap) can find them.
-  rocmRuntimePkgs =
-    with pkgs.rocmPackages;
-    [
-      clr
-      rocm-runtime
-      rocm-device-libs
-      rocminfo
-      rocm-smi
-    ]
-    ++ (with pkgs; [
-      numactl
-      zstd
-    ]);
+  # Match package GPU wrap to accelerator (nixpkgs cudaSupport/rocmSupport args).
+  package = cfg.package.override {
+    cudaSupport = useCuda;
+    rocmSupport = useRocm;
+  };
+  panoptikonBin = "${package}/bin/panoptikon";
+
+  defaultAccelerator =
+    let
+      c = pkgs.config.cudaSupport or false;
+      r = pkgs.config.rocmSupport or false;
+    in
+    if r && !c then
+      "rocm"
+    else if c && !r then
+      "cuda"
+    else
+      "cpu";
+
+  rocmRuntimePkgs = import ./rocm-packages.nix { inherit pkgs; };
 in
 {
   options.services.panoptikon = {
@@ -81,15 +82,24 @@ in
         "cuda"
         "rocm"
       ];
-      default = "cpu";
+      default = defaultAccelerator;
+      defaultText = lib.literalExpression ''
+        if pkgs.config.rocmSupport then "rocm"
+        else if pkgs.config.cudaSupport then "cuda"
+        else "cpu"
+      '';
       description = ''
-        Setup accelerator (PANOPTIKON_ACCELERATOR).
-        - `cpu`: no GPU devices; closed device namespace.
-        - `cuda`: NVIDIA (host drivers via /run/opengl-driver).
-        - `rocm`: AMD ROCm 7.2.x — installs HIP/HSA into the system profile,
-          opens DRM/KFD, and adds the service user to render/video.
-        - `auto`: host-detect at setup; for AMD, install ROCm on the system
-          yourself (or set `rocm` explicitly so this module provides HIP).
+        Setup accelerator (`PANOPTIKON_ACCELERATOR` / `setup --accelerator`).
+        Default follows `nixpkgs.config.rocmSupport` / `cudaSupport` when exactly
+        one is set; otherwise `cpu`.
+
+        - `cpu`: closed devices; package wrap without GPU host paths.
+        - `cuda`: NVIDIA DeviceAllow, render/video, opengl-driver bind; package
+          rebuilt with `cudaSupport = true` (nixpkgs package flag).
+        - `rocm`: HIP/HSA system packages, KFD, render/video, `ROCM_PATH`/`HIP_PATH`;
+          package rebuilt with `rocmSupport = true`.
+        - `auto`: host-detect at setup; opens DRM/KFD/NVIDIA devices but does not
+          install HIP — prefer `rocm` on AMD so this module provides userspace.
       '';
     };
 
@@ -98,9 +108,8 @@ in
       default = null;
       example = "10.3.0";
       description = ''
-        When set, exports HSA_OVERRIDE_GFX_VERSION for the service (and
-        preStart setup). Only needed if ROCm mis-detects the GPU ISA; native
-        gfx1030 with multi-arch pytorch.org wheels usually does not need this.
+        Export HSA_OVERRIDE_GFX_VERSION (meaningful with accelerator `rocm` or
+        `auto`). Usually not needed for multi-arch pytorch.org wheels on gfx1030.
       '';
     };
 
@@ -154,9 +163,9 @@ in
       type = types.bool;
       default = true;
       description = ''
-        preStart: `panoptikon setup --if-needed` (TimeoutStartSec); process keeps
-        PANOPTIKON_AUTO_SETUP for a later stale lockfile. First sync is multi-GB.
-        With accelerator=rocm, setup also runs a HIP kernel probe.
+        preStart: `panoptikon setup --if-needed` (TimeoutStartSec). First sync
+        is multi-GB; `accelerator = "rocm"` also HIP-probes managed torch.
+        PANOPTIKON_AUTO_SETUP still covers a later stale lockfile after start.
       '';
     };
 
@@ -185,7 +194,6 @@ in
       home = cfg.stateDir;
       createHome = false;
       description = "Panoptikon service user";
-      # DRM render nodes + /dev/kfd (ROCm); NVIDIA also uses video/render on NixOS.
       extraGroups = lib.optionals useGpu [
         "render"
         "video"
@@ -198,8 +206,7 @@ in
       pkgs.noto-fonts
     ];
 
-    # HIP/HSA on the system profile so /run/current-system/sw/lib has
-    # libamdhip64 (discovered by panoptikon rocm_env without store paths in config).
+    # HIP under /run/current-system/sw/lib for package wrap + rocm_env.
     environment.systemPackages = lib.optionals useRocm rocmRuntimePkgs;
 
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall [ cfg.port ];
@@ -218,8 +225,8 @@ in
         match that Host; seeded nixos.toml only allows localhost under allow_all.
       ''
       ++ lib.optional (cfg.accelerator == "auto") ''
-        services.panoptikon.accelerator is "auto". For AMD GPUs prefer
-        accelerator = "rocm" so this module installs HIP/HSA and grants KFD access.
+        services.panoptikon.accelerator is "auto". For AMD prefer accelerator = "rocm"
+        so this module installs HIP/HSA and grants KFD with package rocmSupport wrap.
       '';
 
     systemd.services.panoptikon = {
@@ -239,14 +246,13 @@ in
           HSA_OVERRIDE_GFX_VERSION = cfg.rocmOverrideGfx;
         }
         // lib.optionalAttrs useRocm {
-          # Helps HIP tools; worker LD path is still filled by rocm_env at spawn.
           ROCM_PATH = "${pkgs.rocmPackages.clr}";
           HIP_PATH = "${pkgs.rocmPackages.clr}";
         }
         // cfg.extraEnvironment;
 
       path = [
-        cfg.package
+        package
         pkgs.coreutils
       ]
       ++ lib.optionals useRocm [
@@ -260,12 +266,12 @@ in
         mkdir -p "$root"/{config/server,config/inference,data,runtime}
         if [ ! -f "$root/config/server/default.toml" ]; then
           cp --no-preserve=mode,ownership \
-            ${cfg.package}/share/panoptikon/nixos.toml \
+            ${package}/share/panoptikon/nixos.toml \
             "$root/config/server/default.toml"
         fi
         if [ ! -f "$root/config/inference/example.toml" ]; then
           cp --no-preserve=mode,ownership \
-            ${cfg.package}/share/panoptikon/inference-example.toml \
+            ${package}/share/panoptikon/inference-example.toml \
             "$root/config/inference/example.toml"
         fi
         chown -R ${lib.escapeShellArg cfg.user}:${lib.escapeShellArg cfg.group} "$root"
@@ -309,7 +315,6 @@ in
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;
-        # GPU needs real DRM/KFD nodes (ollama-style).
         PrivateDevices = !useGpu;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
@@ -322,20 +327,22 @@ in
         ReadWritePaths = [ root ] ++ cfg.readWritePaths;
         ReadOnlyPaths = cfg.libraryPaths;
 
-        # Optional (-): VMs / headless hosts may lack /run/opengl-driver.
+        # Optional (-): VMs may lack /run/opengl-driver.
         BindReadOnlyPaths = lib.optionals useGpu [ "-/run/opengl-driver" ];
 
-        # Match nixpkgs ollama GPU unit: closed policy + explicit DRM/KFD/NVIDIA.
         DevicePolicy = "closed";
-        DeviceAllow = lib.optionals useGpu [
-          "char-drm"
-          "char-fb"
-          "char-kfd"
-          "char-nvidiactl"
-          "char-nvidia-caps"
-          "char-nvidia-frontend"
-          "char-nvidia-uvm"
-        ];
+        DeviceAllow =
+          lib.optionals useGpu [
+            "char-drm"
+            "char-fb"
+          ]
+          ++ lib.optionals (useRocm || cfg.accelerator == "auto") [ "char-kfd" ]
+          ++ lib.optionals (useCuda || cfg.accelerator == "auto") [
+            "char-nvidiactl"
+            "char-nvidia-caps"
+            "char-nvidia-frontend"
+            "char-nvidia-uvm"
+          ];
         SupplementaryGroups = lib.optionals useGpu [
           "render"
           "video"
