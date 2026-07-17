@@ -212,6 +212,7 @@
         // lib.optionalAttrs isLinux {
           panoptikon-desktop = pkgs.panoptikon-desktop;
           panoptikon-desktop-install = pkgs.panoptikon-desktop.passthru.tests.install;
+          # Outer pkgs already carries packageOverlay; runNixOSTest freezes overlays.
           panoptikon-nixos = pkgs.testers.runNixOSTest {
             imports = [ ./nix/tests/panoptikon.nix ];
             defaults.imports = [ self.nixosModules.default ];

@@ -1,5 +1,5 @@
-# services.panoptikon — --root stateDir; tools via package wrap + host_paths.
-# accelerator selects setup + GPU wiring (same effects as package cuda/rocmSupport).
+# services.panoptikon — --root stateDir; package wrap + host_paths for tools.
+# accelerator drives setup, devices, HIP install, and package cuda/rocmSupport wrap.
 {
   config,
   lib,
@@ -24,24 +24,32 @@ let
 
   useRocm = cfg.accelerator == "rocm";
   useCuda = cfg.accelerator == "cuda";
-  # auto: allow GPU devices for host detect; no HIP install (set rocm explicitly for AMD).
+  # auto: GPU device nodes for host detect; no HIP packages (use rocm for AMD).
   useGpu = cfg.accelerator != "cpu";
 
-  # Match package GPU wrap to accelerator (nixpkgs cudaSupport/rocmSupport args).
-  package = cfg.package.override {
-    cudaSupport = useCuda;
-    rocmSupport = useRocm;
-  };
+  # Rebuild only when wrap flags would change (nixpkgs package args).
+  package =
+    let
+      p = cfg.package;
+      already =
+        (p.cudaSupport or false) == useCuda && (p.rocmSupport or false) == useRocm;
+    in
+    if already then
+      p
+    else
+      p.override {
+        cudaSupport = useCuda;
+        rocmSupport = useRocm;
+      };
   panoptikonBin = "${package}/bin/panoptikon";
 
+  pkgsCuda = pkgs.config.cudaSupport or false;
+  pkgsRocm = pkgs.config.rocmSupport or false;
+
   defaultAccelerator =
-    let
-      c = pkgs.config.cudaSupport or false;
-      r = pkgs.config.rocmSupport or false;
-    in
-    if r && !c then
+    if pkgsRocm && !pkgsCuda then
       "rocm"
-    else if c && !r then
+    else if pkgsCuda && !pkgsRocm then
       "cuda"
     else
       "cpu";
@@ -94,12 +102,12 @@ in
         one is set; otherwise `cpu`.
 
         - `cpu`: closed devices; package wrap without GPU host paths.
-        - `cuda`: NVIDIA DeviceAllow, render/video, opengl-driver bind; package
-          rebuilt with `cudaSupport = true` (nixpkgs package flag).
-        - `rocm`: HIP/HSA system packages, KFD, render/video, `ROCM_PATH`/`HIP_PATH`;
-          package rebuilt with `rocmSupport = true`.
-        - `auto`: host-detect at setup; opens DRM/KFD/NVIDIA devices but does not
-          install HIP — prefer `rocm` on AMD so this module provides userspace.
+        - `cuda`: NVIDIA DeviceAllow, render/video, opengl-driver bind;
+          package with `cudaSupport = true`.
+        - `rocm`: HIP/HSA packages, KFD, render/video, `ROCM_PATH`/`HIP_PATH`;
+          package with `rocmSupport = true`.
+        - `auto`: detect at setup; opens DRM/KFD/NVIDIA devices but does not
+          install HIP — prefer `rocm` on AMD.
       '';
     };
 
@@ -108,8 +116,8 @@ in
       default = null;
       example = "10.3.0";
       description = ''
-        Export HSA_OVERRIDE_GFX_VERSION (meaningful with accelerator `rocm` or
-        `auto`). Usually not needed for multi-arch pytorch.org wheels on gfx1030.
+        Export HSA_OVERRIDE_GFX_VERSION (`rocm` or `auto`). Usually unneeded
+        with multi-arch pytorch.org wheels on gfx1030.
       '';
     };
 
@@ -163,9 +171,9 @@ in
       type = types.bool;
       default = true;
       description = ''
-        preStart: `panoptikon setup --if-needed` (TimeoutStartSec). First sync
-        is multi-GB; `accelerator = "rocm"` also HIP-probes managed torch.
-        PANOPTIKON_AUTO_SETUP still covers a later stale lockfile after start.
+        preStart: `panoptikon setup --if-needed` (long TimeoutStartSec). First
+        sync is multi-GB; `rocm` also HIP-probes torch. PANOPTIKON_AUTO_SETUP
+        still covers a later stale lockfile after start.
       '';
     };
 
@@ -181,6 +189,13 @@ in
       {
         assertion = !(lib.hasPrefix "/nix/store" cfg.stateDir);
         message = "services.panoptikon.stateDir must not be under /nix/store (immutable).";
+      }
+      {
+        assertion = !(pkgsCuda && pkgsRocm);
+        message = ''
+          services.panoptikon: nixpkgs.config.cudaSupport and rocmSupport cannot
+          both be true (same rule as the panoptikon package).
+        '';
       }
       {
         assertion = cfg.rocmOverrideGfx == null || useRocm || cfg.accelerator == "auto";
@@ -206,7 +221,6 @@ in
       pkgs.noto-fonts
     ];
 
-    # HIP under /run/current-system/sw/lib for package wrap + rocm_env.
     environment.systemPackages = lib.optionals useRocm rocmRuntimePkgs;
 
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall [ cfg.port ];
@@ -226,7 +240,7 @@ in
       ''
       ++ lib.optional (cfg.accelerator == "auto") ''
         services.panoptikon.accelerator is "auto". For AMD prefer accelerator = "rocm"
-        so this module installs HIP/HSA and grants KFD with package rocmSupport wrap.
+        so this module installs HIP/HSA and enables package rocmSupport wrap.
       '';
 
     systemd.services.panoptikon = {
@@ -274,7 +288,6 @@ in
             ${package}/share/panoptikon/inference-example.toml \
             "$root/config/inference/example.toml"
         fi
-        chown -R ${lib.escapeShellArg cfg.user}:${lib.escapeShellArg cfg.group} "$root"
         ${lib.optionalString cfg.autoSetup ''
           if ! ${panoptikonBin} \
               --root "$root" \

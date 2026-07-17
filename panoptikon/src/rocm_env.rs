@@ -1,7 +1,5 @@
-//! Host HIP/HSA discovery for Linux inference workers and setup probes.
-//!
-//! ROCm torch needs host HIP on `LD_LIBRARY_PATH`. Workers use [`worker_env`];
-//! `panoptikon setup --accelerator rocm` runs [`probe_rocm_torch`].
+//! Host HIP/HSA discovery for Linux workers and setup probes.
+//! Workers use [`worker_env`]; setup `--accelerator rocm` runs [`probe_rocm_torch`].
 
 use std::env;
 use std::ffi::OsString;

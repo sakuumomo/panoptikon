@@ -34,11 +34,12 @@
     assert "PANOPTIKON_ACCELERATOR=rocm" in env
     assert "ROCM_PATH=" in env
 
-    # Package rebuilt with rocmSupport (host HIP paths in wrap).
+    # Package wrap includes host HIP paths (rocmSupport).
     exe = machine.succeed(
         "systemctl cat panoptikon.service | sed -n 's|^ExecStart=\\([^ ]*\\).*|\\1|p' | head -1"
     ).strip()
-    machine.succeed(f"grep -q '/opt/rocm/lib' '{exe}'")
+    assert exe, "missing ExecStart binary"
+    machine.succeed(f"test -x '{exe}' && grep -q '/opt/rocm/lib' '{exe}'")
 
     machine.succeed("systemctl is-active panoptikon.service")
     machine.wait_until_succeeds(

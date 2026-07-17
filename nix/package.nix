@@ -152,17 +152,20 @@ let
   runtimeLibPath = lib.makeLibraryPath pythonRuntimeLibs;
 
   # Host GPU loader paths (only when support flags are set).
-  gpuWrapArgs =
-    lib.optionals useGpu [
-      "--run"
-      ''if [ -d /run/opengl-driver/lib ]; then export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi''
-    ]
-    ++ lib.optionals rocmSupport [
-      "--run"
-      ''if [ -d /opt/rocm/lib ]; then export LD_LIBRARY_PATH="/opt/rocm/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi''
-      "--run"
-      ''if [ -e /run/current-system/sw/lib/libamdhip64.so ] || [ -e /run/current-system/sw/lib/libamdhip64.so.7 ]; then export LD_LIBRARY_PATH="/run/current-system/sw/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi''
-    ];
+  gpuLdScript =
+    lib.optionalString useGpu ''
+      if [ -d /run/opengl-driver/lib ]; then
+        export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      fi
+    ''
+    + lib.optionalString rocmSupport ''
+      if [ -d /opt/rocm/lib ]; then
+        export LD_LIBRARY_PATH="/opt/rocm/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      fi
+      if [ -e /run/current-system/sw/lib/libamdhip64.so ] || [ -e /run/current-system/sw/lib/libamdhip64.so.7 ]; then
+        export LD_LIBRARY_PATH="/run/current-system/sw/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      fi
+    '';
 
 in
 rustPlatform.buildRustPackage (finalAttrs: {
@@ -209,7 +212,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
       --prefix LD_LIBRARY_PATH : ${runtimeLibPath} \
       --set FONTCONFIG_FILE ${fontsConf} \
       --set UV_PYTHON ${python312}/bin/python3.12 \
-      --set UV_PYTHON_DOWNLOADS never ${toString (map lib.escapeShellArg gpuWrapArgs)}
+      --set UV_PYTHON_DOWNLOADS never ${lib.optionalString useGpu "--run ${lib.escapeShellArg gpuLdScript}"}
   '';
 
   passthru = {

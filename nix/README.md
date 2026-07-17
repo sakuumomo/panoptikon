@@ -53,11 +53,10 @@ Package flags are standard nixpkgs GPU args (`config.*` + `.override`, not both)
 }
 ```
 
-- **`accelerator`** drives setup, devices, and rebuilds `package` with matching
-  `cudaSupport` / `rocmSupport` (nixpkgs package flags — not both)
-- Default accelerator: `rocm` / `cuda` if that nixpkgs config flag alone is set, else `cpu`
-- `rocm`: HIP packages, KFD, `ROCM_PATH`/`HIP_PATH`, wrap with host HIP paths
-- `cuda`: NVIDIA devices, opengl-driver bind, CUDA package wrap
+- **`accelerator`** drives setup, devices, HIP install, and matching package
+  wrap (`cudaSupport` / `rocmSupport` — nixpkgs package flags, not both)
+- Default accelerator: from `nixpkgs.config` when exactly one GPU flag is set
+- Seeded `nixos.toml` binds `PANOPTIKON_ACCELERATOR` / `PANOPTIKON_AUTO_SETUP`
 - Do not expose non-loopback without a reverse proxy + matching policy
 
 ## Manual run of the built package
