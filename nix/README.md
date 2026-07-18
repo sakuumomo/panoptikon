@@ -46,6 +46,11 @@ panoptikon-desktop.override {
 # or: panoptikon-desktop.override { panoptikon = panoptikon-rocm; }
 ```
 
+GPU server packages set `PANOPTIKON_ACCELERATOR` (rocm/cuda). Desktop
+`config/server/desktop.toml` templates that for setup. Tray needs
+`libayatana-appindicator` on the desktop wrap `LD_LIBRARY_PATH` (done in
+`nix/desktop.nix`).
+
 ## NixOS module
 
 ```nix

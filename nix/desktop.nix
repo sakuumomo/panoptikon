@@ -7,6 +7,7 @@
   makeWrapper,
   wrapGAppsHook4,
   gtk3,
+  glib,
   webkitgtk_4_1,
   libsoup_3,
   librsvg,
@@ -24,6 +25,13 @@ let
   pname = "panoptikon-desktop";
   rustTarget = stdenv.hostPlatform.rust.rustcTarget;
   sidecarName = "panoptikon-${rustTarget}";
+
+  # libappindicator-sys dlopens ayatana at runtime (not DT_NEEDED).
+  trayLibPath = lib.makeLibraryPath [
+    libayatana-appindicator
+    gtk3
+    glib
+  ];
 in
 rustPlatform.buildRustPackage (finalAttrs: {
   inherit pname version src;
@@ -83,6 +91,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     wrapProgram $out/bin/panoptikon-desktop \
       "''${gappsWrapperArgs[@]}" \
       --prefix PATH : $out/bin \
+      --prefix LD_LIBRARY_PATH : ${trayLibPath} \
       --set-default WEBKIT_DISABLE_COMPOSITING_MODE 1
   '';
 
@@ -101,6 +110,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
             test -x "$pkg/libexec/panoptikon-desktop/${sidecarName}"
             grep -q UV_PYTHON "$pkg/bin/panoptikon"
             grep -q PATH "$pkg/bin/panoptikon-desktop"
+            # AppIndicator path for pure nix run (dlopen).
+            grep -q libayatana-appindicator "$pkg/bin/panoptikon-desktop"
             cmp -s "$pkg/bin/panoptikon" ${panoptikon}/bin/panoptikon
             touch $out
           '';

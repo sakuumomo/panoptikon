@@ -164,6 +164,23 @@ let
       fi
     '';
 
+  # Pin setup accelerator to match GPU package (desktop.toml templates this).
+  gpuWrapArgs =
+    lib.optionals rocmSupport [
+      "--set"
+      "PANOPTIKON_ACCELERATOR"
+      "rocm"
+    ]
+    ++ lib.optionals cudaSupport [
+      "--set"
+      "PANOPTIKON_ACCELERATOR"
+      "cuda"
+    ]
+    ++ lib.optionals useGpu [
+      "--run"
+      gpuLdScript
+    ];
+
 in
 rustPlatform.buildRustPackage (finalAttrs: {
   inherit pname version;
@@ -209,7 +226,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
       --prefix LD_LIBRARY_PATH : ${runtimeLibPath} \
       --set FONTCONFIG_FILE ${fontsConf} \
       --set UV_PYTHON ${python312}/bin/python3.12 \
-      --set UV_PYTHON_DOWNLOADS never ${lib.optionalString useGpu "--run ${lib.escapeShellArg gpuLdScript}"}
+      --set UV_PYTHON_DOWNLOADS never ${lib.escapeShellArgs gpuWrapArgs}
   '';
 
   passthru = {
@@ -256,6 +273,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
                 ''
                   grep -q '/opt/rocm/lib' "$bin"
                   grep -q current-system/sw/lib "$bin"
+                  grep -q PANOPTIKON_ACCELERATOR "$bin"
+                  grep -q rocm "$bin"
+                ''
+              else if cudaSupport then
+                ''
+                  grep -q PANOPTIKON_ACCELERATOR "$bin"
+                  grep -q cuda "$bin"
                 ''
               else
                 ''! grep -q '/opt/rocm/lib' "$bin"''
