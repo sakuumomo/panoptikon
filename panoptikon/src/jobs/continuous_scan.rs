@@ -1564,7 +1564,16 @@ fn is_sqlite_db_file(path: &Path) -> bool {
 /// transaction and checkpoint; an event touching only those is skipped. Events
 /// touching anything else (a `config.toml`, or a DB directory being added or
 /// removed) are relevant, as are path-less events some backends emit.
+///
+/// Access events (open / close / read) must be ignored: notify's inotify
+/// backend watches `OPEN`, and `resync_from_disk` itself opens `config.toml`
+/// and readdir's the index tree. Treating those as relevant re-enqueues
+/// ResyncFromDisk forever (idle: ~3k resyncs/s, 100%+ CPU, multi-MB/s RSS).
+/// Real config edits still produce Create / Modify / Remove / Rename.
 fn event_is_relevant(event: &Event) -> bool {
+    if matches!(event.kind, EventKind::Access(_)) {
+        return false;
+    }
     event.paths.is_empty() || event.paths.iter().any(|p| !is_sqlite_db_file(p))
 }
 
@@ -2164,5 +2173,34 @@ mod tests {
         ));
         // Path-less events (some backends emit them) are treated as relevant.
         assert!(event_is_relevant(&Event::new(EventKind::Any)));
+    }
+
+    #[test]
+    fn supervisor_watcher_skips_access_events_from_own_reads() {
+        use notify::event::{AccessKind, AccessMode};
+
+        let cfg = std::path::Path::new("data/index/mydb/config.toml").to_path_buf();
+        let index_dir = std::path::Path::new("data/index").to_path_buf();
+
+        // resync_from_disk opens config.toml and readdir's the index root;
+        // those must not re-enqueue ResyncFromDisk.
+        assert!(!event_is_relevant(
+            &Event::new(EventKind::Access(AccessKind::Open(AccessMode::Any))).add_path(cfg.clone())
+        ));
+        assert!(!event_is_relevant(
+            &Event::new(EventKind::Access(AccessKind::Open(AccessMode::Any)))
+                .add_path(index_dir)
+        ));
+        assert!(!event_is_relevant(
+            &Event::new(EventKind::Access(AccessKind::Close(AccessMode::Read)))
+                .add_path(cfg.clone())
+        ));
+        // An actual content write still counts (Modify, not Access).
+        assert!(event_is_relevant(
+            &Event::new(EventKind::Modify(ModifyKind::Data(
+                notify::event::DataChange::Any
+            )))
+            .add_path(cfg)
+        ));
     }
 }
