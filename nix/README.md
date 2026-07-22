@@ -18,7 +18,7 @@ Bundled server + host_paths + `--root` state. Flake input: `nixpkgs` (unstable).
 | Label fonts | `FONTCONFIG_FILE` (DejaVu) |
 | CUDA / ROCm (package) | nixpkgs `config.cudaSupport` / `rocmSupport` (or `.override`) |
 | CUDA / ROCm (service) | `services.panoptikon.accelerator` → devices, HIP, setup, package wrap |
-| Workers HIP | `rocm_env` + wrap when package has `rocmSupport` |
+| Workers HIP | `accelerator_env` (resolved `rocm`) + wrap when package has `rocmSupport` |
 | pdfium | venv after setup |
 
 Do not put `/nix/store/...` tool paths into TOML.
