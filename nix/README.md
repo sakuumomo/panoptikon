@@ -95,20 +95,28 @@ Package smokes (no VM, no network; GPU installs only inspect the wrap):
 nix build .#checks.x86_64-linux.panoptikon-cli
 nix build .#checks.x86_64-linux.panoptikon-install            # CPU wrap
 nix build .#checks.x86_64-linux.panoptikon-rocm-install       # rocmSupport wrap
+nix build .#checks.x86_64-linux.panoptikon-cuda-install       # cudaSupport wrap
 nix build .#checks.x86_64-linux.panoptikon-desktop-install
 nix build .#checks.x86_64-linux.panoptikon-desktop-rocm-install
+nix build .#checks.x86_64-linux.panoptikon-desktop-cuda-install
 ```
 
-NixOS VM tests (`autoSetup = false`):
+NixOS VM tests (`autoSetup = false`; no real GPU required):
 
 ```bash
 nix build .#checks.x86_64-linux.panoptikon-nixos              # CPU service
 nix build .#checks.x86_64-linux.panoptikon-nixos-rocm-config  # accelerator=rocm wiring
+nix build .#checks.x86_64-linux.panoptikon-nixos-cuda-config  # accelerator=cuda wiring
 ```
 
-CPU VM asserts no KFD/ROCm package wrap; ROCm VM asserts HIP packages, env,
-groups, and `rocmSupport` wrap. Tests under `nix/tests/` are nixpkgs-style;
-the flake injects the module via `defaults.imports`.
+| Check | Asserts |
+| --- | --- |
+| CPU package / VM | no GPU wrap, no KFD/NVIDIA devices, no ROCm env |
+| ROCm package / VM | HIP paths, `PANOPTIKON_ACCELERATOR=rocm`, KFD + render, no NVIDIA devices |
+| CUDA package / VM | opengl-driver + `PANOPTIKON_ACCELERATOR=cuda`, NVIDIA devices, no HIP |
+
+Tests under `nix/tests/` are nixpkgs-style; the flake injects the module via
+`defaults.imports`.
 
 ## Submitting to nixpkgs
 

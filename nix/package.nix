@@ -280,12 +280,16 @@ rustPlatform.buildRustPackage (finalAttrs: {
                 ''
                   grep -q PANOPTIKON_ACCELERATOR "$bin"
                   grep -q cuda "$bin"
+                  grep -q opengl-driver "$bin"
+                  # CUDA wrap must not inject ROCm host paths.
                   ! grep -q '/opt/rocm/lib' "$bin"
+                  ! grep -q 'libamdhip64' "$bin"
                 ''
               else
                 ''
                   ! grep -q '/opt/rocm/lib' "$bin"
                   ! grep -q PANOPTIKON_ACCELERATOR "$bin"
+                  ! grep -q opengl-driver "$bin"
                 ''
             }
             grep -q nodejs "$bin"

@@ -171,8 +171,8 @@ in
       default = true;
       description = ''
         preStart: `panoptikon setup --if-needed` (long TimeoutStartSec). First
-        sync is multi-GB; `rocm` also HIP-probes torch. PANOPTIKON_AUTO_SETUP
-        still covers a later stale lockfile after start.
+        sync is multi-GB; `rocm` also HIP-probes torch after sync.
+        PANOPTIKON_AUTO_SETUP still covers a later stale lockfile after start.
       '';
     };
 

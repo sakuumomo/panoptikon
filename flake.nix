@@ -215,12 +215,15 @@
           panoptikon-install = pkgs.panoptikon.passthru.tests.install;
           # Same install script, parameterized by package flags (no GPU needed).
           panoptikon-rocm-install = pkgs.panoptikon-rocm.passthru.tests.install;
+          panoptikon-cuda-install = pkgs.panoptikon-cuda.passthru.tests.install;
         }
         // lib.optionalAttrs isLinux {
           panoptikon-desktop = pkgs.panoptikon-desktop;
           panoptikon-desktop-install = pkgs.panoptikon-desktop.passthru.tests.install;
           panoptikon-desktop-rocm-install =
             pkgs.panoptikon-desktop-rocm.passthru.tests.install;
+          panoptikon-desktop-cuda-install =
+            pkgs.panoptikon-desktop-cuda.passthru.tests.install;
           # pkgs already has the overlay; runNixOSTest freezes overlays.
           panoptikon-nixos = pkgs.testers.runNixOSTest {
             imports = [ ./nix/tests/panoptikon.nix ];
@@ -228,6 +231,10 @@
           };
           panoptikon-nixos-rocm-config = pkgs.testers.runNixOSTest {
             imports = [ ./nix/tests/panoptikon-rocm-config.nix ];
+            defaults.imports = [ self.nixosModules.default ];
+          };
+          panoptikon-nixos-cuda-config = pkgs.testers.runNixOSTest {
+            imports = [ ./nix/tests/panoptikon-cuda-config.nix ];
             defaults.imports = [ self.nixosModules.default ];
           };
         };

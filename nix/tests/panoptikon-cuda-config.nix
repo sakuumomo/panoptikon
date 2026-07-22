@@ -1,6 +1,7 @@
-# NixOS VM smoke for services.panoptikon (CPU). Flake injects the module.
+# CUDA wiring when services.panoptikon.accelerator = "cuda".
+# Pure config/wrap assertions (no NVIDIA hardware required).
 {
-  name = "panoptikon";
+  name = "panoptikon-cuda-config";
   meta.maintainers = [ ];
 
   nodes.machine =
@@ -9,6 +10,7 @@
       services.panoptikon = {
         enable = true;
         autoSetup = false;
+        accelerator = "cuda";
         host = "127.0.0.1";
         port = 6342;
       };
@@ -18,33 +20,36 @@
   testScript = ''
     machine.wait_for_unit("panoptikon.service")
     machine.wait_for_open_port(6342)
-    machine.succeed("test -f /var/lib/panoptikon/config/server/default.toml")
-    machine.succeed("test -f /var/lib/panoptikon/config/inference/example.toml")
+
+    unit = machine.succeed("systemctl cat panoptikon.service")
+    # NVIDIA device nodes; not AMD KFD.
+    assert "char-nvidiactl" in unit
+    assert "char-nvidia-uvm" in unit
+    assert "char-kfd" not in unit
+    assert "render" in unit
+    machine.succeed("systemctl show panoptikon.service -p SupplementaryGroups --value | grep -q render")
 
     env = machine.succeed("systemctl show panoptikon.service -p Environment --value")
-    assert "PANOPTIKON_ACCELERATOR=cpu" in env
+    assert "PANOPTIKON_ACCELERATOR=cuda" in env
+    # ROCm-only service env must not be set for CUDA.
     assert "ROCM_PATH=" not in env
     assert "HIP_PATH=" not in env
 
-    # CPU service must not pull in GPU device wiring (AMD or NVIDIA).
-    unit = machine.succeed("systemctl cat panoptikon.service")
-    assert "char-kfd" not in unit
-    assert "char-nvidiactl" not in unit
-
-    # Default package wrap is CPU-only (no host GPU LD path scripts).
+    # Package wrap: cudaSupport pin + opengl-driver host path; no HIP paths.
     exe = machine.succeed(
         "systemctl cat panoptikon.service | sed -n 's|^ExecStart=\\([^ ]*\\).*|\\1|p' | head -1"
     ).strip()
     assert exe, "missing ExecStart binary"
     machine.succeed(f"test -x '{exe}'")
+    machine.succeed(f"grep -q PANOPTIKON_ACCELERATOR '{exe}'")
+    machine.succeed(f"grep -q cuda '{exe}'")
+    machine.succeed(f"grep -q opengl-driver '{exe}'")
     machine.fail(f"grep -q '/opt/rocm/lib' '{exe}'")
-    machine.fail(f"grep -q opengl-driver '{exe}'")
-    machine.fail(f"grep -q PANOPTIKON_ACCELERATOR '{exe}'")
 
+    machine.succeed("systemctl is-active panoptikon.service")
     machine.wait_until_succeeds(
         "curl -fsS http://127.0.0.1:6342/api/client-config | grep -q capabilities",
         timeout=120,
     )
-    machine.succeed("systemctl is-active panoptikon.service")
   '';
 }

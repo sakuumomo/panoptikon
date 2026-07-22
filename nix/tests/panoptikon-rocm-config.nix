@@ -23,6 +23,8 @@
     unit = machine.succeed("systemctl cat panoptikon.service")
     assert "char-kfd" in unit
     assert "render" in unit
+    # ROCm path should not open NVIDIA device classes.
+    assert "char-nvidiactl" not in unit
     machine.succeed("systemctl show panoptikon.service -p SupplementaryGroups --value | grep -q render")
 
     machine.succeed(
