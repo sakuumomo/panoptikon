@@ -280,9 +280,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
                 ''
                   grep -q PANOPTIKON_ACCELERATOR "$bin"
                   grep -q cuda "$bin"
+                  ! grep -q '/opt/rocm/lib' "$bin"
                 ''
               else
-                ''! grep -q '/opt/rocm/lib' "$bin"''
+                ''
+                  ! grep -q '/opt/rocm/lib' "$bin"
+                  ! grep -q PANOPTIKON_ACCELERATOR "$bin"
+                ''
             }
             grep -q nodejs "$bin"
             grep -q ffmpeg "$bin"
