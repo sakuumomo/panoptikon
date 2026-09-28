@@ -33,6 +33,17 @@ jobs:
       - name: Verify ui-pin.json matches the tagged ui gitlink
         run: python3 scripts/sync-nix-ui-pin.py --check --ref HEAD
 
+  # Build the tagged flake as committed. Does not update locks or move the
+  # tag, and nothing here gates the binary release (same as nix-pin-check).
+  # pull-requests: write is not used. GitHub still checks the skipped update
+  # job, and that job requests it.
+  nix:
+    name: Nix package
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/nix.yml
+
   build:
     name: Build (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
